@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { 
@@ -20,78 +20,55 @@ import {
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { useUserRole } from "@/hooks/useUserRole";
+import { CreateCircularDialog } from "@/components/dashboard/CreateCircularDialog";
+import { CreateEventDialog } from "@/components/dashboard/CreateEventDialog";
+import { CreateWebinarDialog } from "@/components/dashboard/CreateWebinarDialog";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 
-// Mock data for demonstration
-const mockCirculars = [
-  {
-    id: 1,
-    title: "Mid-Semester Examination Schedule",
-    department: "Academic Office",
-    date: "2024-01-15",
-    type: "important",
-  },
-  {
-    id: 2,
-    title: "Library Timing Changes",
-    department: "Library",
-    date: "2024-01-14",
-    type: "general",
-  },
-  {
-    id: 3,
-    title: "Workshop on Research Methodology",
-    department: "Computer Science",
-    date: "2024-01-13",
-    type: "event",
-  },
-];
+interface Circular {
+  id: string;
+  title: string;
+  department: string;
+  type: string;
+  created_at: string;
+}
 
-const mockEvents = [
-  {
-    id: 1,
-    title: "Tech Hackathon 2024",
-    club: "Coding Club",
-    date: "2024-01-25",
-    time: "9:00 AM",
-    venue: "Main Auditorium",
-    registered: false,
-  },
-  {
-    id: 2,
-    title: "Cultural Night",
-    club: "Cultural Committee",
-    date: "2024-01-28",
-    time: "6:00 PM",
-    venue: "Open Air Theatre",
-    registered: true,
-  },
-];
+interface Event {
+  id: string;
+  title: string;
+  club_name: string;
+  event_date: string;
+  event_time: string;
+  venue: string;
+  isRegistered?: boolean;
+}
 
-const mockWebinars = [
-  {
-    id: 1,
-    title: "AI in Modern Education",
-    faculty: "Dr. Sarah Johnson",
-    date: "2024-01-20",
-    time: "3:00 PM",
-    link: "#",
-  },
-  {
-    id: 2,
-    title: "Career Guidance Session",
-    faculty: "Prof. Michael Chen",
-    date: "2024-01-22",
-    time: "2:00 PM",
-    link: "#",
-  },
-];
+interface Webinar {
+  id: string;
+  title: string;
+  faculty_name: string | null;
+  webinar_date: string;
+  webinar_time: string;
+  meeting_link: string;
+}
 
 const Dashboard = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
   const [user, setUser] = useState<SupabaseUser | null>(null);
   const [loading, setLoading] = useState(true);
+  
+  const [circulars, setCirculars] = useState<Circular[]>([]);
+  const [events, setEvents] = useState<Event[]>([]);
+  const [webinars, setWebinars] = useState<Webinar[]>([]);
+  const [registeredEvents, setRegisteredEvents] = useState<Set<string>>(new Set());
+
+  const [showCircularDialog, setShowCircularDialog] = useState(false);
+  const [showEventDialog, setShowEventDialog] = useState(false);
+  const [showWebinarDialog, setShowWebinarDialog] = useState(false);
+
+  const { role, canCreateCirculars, canCreateEvents, canCreateWebinars } = useUserRole(user?.id);
 
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
@@ -115,6 +92,95 @@ const Dashboard = () => {
     return () => subscription.unsubscribe();
   }, [navigate]);
 
+  useEffect(() => {
+    if (user) {
+      fetchData();
+    }
+  }, [user]);
+
+  const fetchData = async () => {
+    await Promise.all([
+      fetchCirculars(),
+      fetchEvents(),
+      fetchWebinars(),
+      fetchRegistrations(),
+    ]);
+  };
+
+  const fetchCirculars = async () => {
+    const { data, error } = await supabase
+      .from("circulars")
+      .select("id, title, department, type, created_at")
+      .order("created_at", { ascending: false })
+      .limit(10);
+    
+    if (!error && data) {
+      setCirculars(data);
+    }
+  };
+
+  const fetchEvents = async () => {
+    const { data, error } = await supabase
+      .from("events")
+      .select("id, title, club_name, event_date, event_time, venue")
+      .gte("event_date", new Date().toISOString().split("T")[0])
+      .order("event_date", { ascending: true })
+      .limit(10);
+    
+    if (!error && data) {
+      setEvents(data);
+    }
+  };
+
+  const fetchWebinars = async () => {
+    const { data, error } = await supabase
+      .from("webinars")
+      .select("id, title, faculty_name, webinar_date, webinar_time, meeting_link")
+      .gte("webinar_date", new Date().toISOString().split("T")[0])
+      .order("webinar_date", { ascending: true })
+      .limit(10);
+    
+    if (!error && data) {
+      setWebinars(data);
+    }
+  };
+
+  const fetchRegistrations = async () => {
+    if (!user) return;
+    
+    const { data, error } = await supabase
+      .from("event_registrations")
+      .select("event_id")
+      .eq("user_id", user.id);
+    
+    if (!error && data) {
+      setRegisteredEvents(new Set(data.map(r => r.event_id)));
+    }
+  };
+
+  const handleRegisterEvent = async (eventId: string) => {
+    if (!user) return;
+
+    const { error } = await supabase.from("event_registrations").insert({
+      event_id: eventId,
+      user_id: user.id,
+    });
+
+    if (error) {
+      toast({
+        title: "Registration failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    } else {
+      toast({
+        title: "Registered!",
+        description: "You have successfully registered for this event.",
+      });
+      setRegisteredEvents(prev => new Set([...prev, eventId]));
+    }
+  };
+
   const handleLogout = async () => {
     await supabase.auth.signOut();
     toast({
@@ -124,8 +190,23 @@ const Dashboard = () => {
     navigate("/");
   };
 
-  const userRole = user?.user_metadata?.role || "student";
   const userName = user?.user_metadata?.full_name || "User";
+
+  const formatDate = (date: string) => {
+    return new Date(date).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+  };
+
+  const formatTime = (time: string) => {
+    const [hours, minutes] = time.split(":");
+    const hour = parseInt(hours);
+    const ampm = hour >= 12 ? "PM" : "AM";
+    const displayHour = hour % 12 || 12;
+    return `${displayHour}:${minutes} ${ampm}`;
+  };
 
   if (loading) {
     return (
@@ -137,7 +218,7 @@ const Dashboard = () => {
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Sidebar/Header */}
+      {/* Header */}
       <header className="sticky top-0 z-50 bg-card/80 backdrop-blur-lg border-b border-border">
         <div className="container-custom px-4 md:px-8">
           <div className="flex items-center justify-between h-16">
@@ -152,14 +233,14 @@ const Dashboard = () => {
               <Button variant="ghost" size="icon" className="relative">
                 <Bell className="h-5 w-5" />
                 <span className="absolute -top-1 -right-1 w-4 h-4 bg-destructive text-destructive-foreground text-xs rounded-full flex items-center justify-center">
-                  3
+                  {circulars.length}
                 </span>
               </Button>
 
               <div className="flex items-center gap-3">
                 <div className="text-right hidden sm:block">
                   <p className="text-sm font-medium">{userName}</p>
-                  <p className="text-xs text-muted-foreground capitalize">{userRole}</p>
+                  <p className="text-xs text-muted-foreground capitalize">{role.replace("_", " ")}</p>
                 </div>
                 <div className="p-2 rounded-full bg-primary/10">
                   <User className="h-5 w-5 text-primary" />
@@ -195,8 +276,8 @@ const Dashboard = () => {
                   <FileText className="h-5 w-5 text-primary" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold">12</p>
-                  <p className="text-sm text-muted-foreground">New Circulars</p>
+                  <p className="text-2xl font-bold">{circulars.length}</p>
+                  <p className="text-sm text-muted-foreground">Circulars</p>
                 </div>
               </div>
             </CardContent>
@@ -209,7 +290,7 @@ const Dashboard = () => {
                   <Calendar className="h-5 w-5 text-accent" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold">5</p>
+                  <p className="text-2xl font-bold">{events.length}</p>
                   <p className="text-sm text-muted-foreground">Upcoming Events</p>
                 </div>
               </div>
@@ -223,8 +304,8 @@ const Dashboard = () => {
                   <Video className="h-5 w-5 text-gold" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold">3</p>
-                  <p className="text-sm text-muted-foreground">Live Webinars</p>
+                  <p className="text-2xl font-bold">{webinars.length}</p>
+                  <p className="text-sm text-muted-foreground">Webinars</p>
                 </div>
               </div>
             </CardContent>
@@ -237,8 +318,8 @@ const Dashboard = () => {
                   <Bell className="h-5 w-5 text-destructive" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold">8</p>
-                  <p className="text-sm text-muted-foreground">Notifications</p>
+                  <p className="text-2xl font-bold">{registeredEvents.size}</p>
+                  <p className="text-sm text-muted-foreground">Registered</p>
                 </div>
               </div>
             </CardContent>
@@ -266,8 +347,8 @@ const Dashboard = () => {
           <TabsContent value="circulars" className="space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="text-xl font-semibold">Latest Circulars</h2>
-              {(userRole === "faculty" || userRole === "admin") && (
-                <Button className="btn-primary-gradient gap-2">
+              {canCreateCirculars && (
+                <Button className="btn-primary-gradient gap-2" onClick={() => setShowCircularDialog(true)}>
                   <Plus className="h-4 w-4" />
                   Post Circular
                 </Button>
@@ -275,27 +356,35 @@ const Dashboard = () => {
             </div>
 
             <div className="grid gap-4">
-              {mockCirculars.map((circular) => (
-                <Card key={circular.id} className="feature-card">
-                  <CardContent className="p-4">
-                    <div className="flex items-start justify-between">
-                      <div className="flex gap-4">
-                        <div className="p-3 rounded-lg bg-primary/10">
-                          <FileText className="h-5 w-5 text-primary" />
-                        </div>
-                        <div>
-                          <h3 className="font-semibold text-foreground">{circular.title}</h3>
-                          <p className="text-sm text-muted-foreground">{circular.department}</p>
-                          <p className="text-xs text-muted-foreground mt-1">{circular.date}</p>
-                        </div>
-                      </div>
-                      <Badge variant={circular.type === "important" ? "destructive" : "secondary"}>
-                        {circular.type}
-                      </Badge>
-                    </div>
+              {circulars.length === 0 ? (
+                <Card className="feature-card">
+                  <CardContent className="p-8 text-center text-muted-foreground">
+                    No circulars yet. {canCreateCirculars && "Click 'Post Circular' to create one."}
                   </CardContent>
                 </Card>
-              ))}
+              ) : (
+                circulars.map((circular) => (
+                  <Card key={circular.id} className="feature-card">
+                    <CardContent className="p-4">
+                      <div className="flex items-start justify-between">
+                        <div className="flex gap-4">
+                          <div className="p-3 rounded-lg bg-primary/10">
+                            <FileText className="h-5 w-5 text-primary" />
+                          </div>
+                          <div>
+                            <h3 className="font-semibold text-foreground">{circular.title}</h3>
+                            <p className="text-sm text-muted-foreground">{circular.department}</p>
+                            <p className="text-xs text-muted-foreground mt-1">{formatDate(circular.created_at)}</p>
+                          </div>
+                        </div>
+                        <Badge variant={circular.type === "important" ? "destructive" : "secondary"}>
+                          {circular.type}
+                        </Badge>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))
+              )}
             </div>
           </TabsContent>
 
@@ -303,8 +392,8 @@ const Dashboard = () => {
           <TabsContent value="events" className="space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="text-xl font-semibold">Upcoming Events</h2>
-              {(userRole === "club_member" || userRole === "admin") && (
-                <Button className="btn-primary-gradient gap-2">
+              {canCreateEvents && (
+                <Button className="btn-primary-gradient gap-2" onClick={() => setShowEventDialog(true)}>
                   <Plus className="h-4 w-4" />
                   Create Event
                 </Button>
@@ -312,45 +401,60 @@ const Dashboard = () => {
             </div>
 
             <div className="grid md:grid-cols-2 gap-4">
-              {mockEvents.map((event) => (
-                <Card key={event.id} className="feature-card">
-                  <CardContent className="p-4">
-                    <div className="space-y-3">
-                      <div className="flex items-start justify-between">
-                        <div>
-                          <h3 className="font-semibold text-foreground">{event.title}</h3>
-                          <p className="text-sm text-muted-foreground">{event.club}</p>
-                        </div>
-                        <Badge variant={event.registered ? "default" : "outline"}>
-                          {event.registered ? "Registered" : "Open"}
-                        </Badge>
-                      </div>
-
-                      <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
-                        <div className="flex items-center gap-1">
-                          <Calendar className="h-4 w-4" />
-                          {event.date}
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <Clock className="h-4 w-4" />
-                          {event.time}
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <MapPin className="h-4 w-4" />
-                          {event.venue}
-                        </div>
-                      </div>
-
-                      {!event.registered && (
-                        <Button variant="outline" className="w-full btn-outline-hero">
-                          Register Now
-                          <ChevronRight className="h-4 w-4 ml-2" />
-                        </Button>
-                      )}
-                    </div>
+              {events.length === 0 ? (
+                <Card className="feature-card md:col-span-2">
+                  <CardContent className="p-8 text-center text-muted-foreground">
+                    No upcoming events. {canCreateEvents && "Click 'Create Event' to add one."}
                   </CardContent>
                 </Card>
-              ))}
+              ) : (
+                events.map((event) => {
+                  const isRegistered = registeredEvents.has(event.id);
+                  return (
+                    <Card key={event.id} className="feature-card">
+                      <CardContent className="p-4">
+                        <div className="space-y-3">
+                          <div className="flex items-start justify-between">
+                            <div>
+                              <h3 className="font-semibold text-foreground">{event.title}</h3>
+                              <p className="text-sm text-muted-foreground">{event.club_name}</p>
+                            </div>
+                            <Badge variant={isRegistered ? "default" : "outline"}>
+                              {isRegistered ? "Registered" : "Open"}
+                            </Badge>
+                          </div>
+
+                          <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
+                            <div className="flex items-center gap-1">
+                              <Calendar className="h-4 w-4" />
+                              {formatDate(event.event_date)}
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <Clock className="h-4 w-4" />
+                              {formatTime(event.event_time)}
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <MapPin className="h-4 w-4" />
+                              {event.venue}
+                            </div>
+                          </div>
+
+                          {!isRegistered && (
+                            <Button 
+                              variant="outline" 
+                              className="w-full btn-outline-hero"
+                              onClick={() => handleRegisterEvent(event.id)}
+                            >
+                              Register Now
+                              <ChevronRight className="h-4 w-4 ml-2" />
+                            </Button>
+                          )}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })
+              )}
             </div>
           </TabsContent>
 
@@ -358,8 +462,8 @@ const Dashboard = () => {
           <TabsContent value="webinars" className="space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="text-xl font-semibold">Upcoming Webinars</h2>
-              {(userRole === "faculty" || userRole === "admin") && (
-                <Button className="btn-primary-gradient gap-2">
+              {canCreateWebinars && (
+                <Button className="btn-primary-gradient gap-2" onClick={() => setShowWebinarDialog(true)}>
                   <Plus className="h-4 w-4" />
                   Schedule Webinar
                 </Button>
@@ -367,38 +471,67 @@ const Dashboard = () => {
             </div>
 
             <div className="grid md:grid-cols-2 gap-4">
-              {mockWebinars.map((webinar) => (
-                <Card key={webinar.id} className="feature-card">
-                  <CardContent className="p-4">
-                    <div className="space-y-3">
-                      <div>
-                        <h3 className="font-semibold text-foreground">{webinar.title}</h3>
-                        <p className="text-sm text-muted-foreground">by {webinar.faculty}</p>
-                      </div>
-
-                      <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
-                        <div className="flex items-center gap-1">
-                          <Calendar className="h-4 w-4" />
-                          {webinar.date}
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <Clock className="h-4 w-4" />
-                          {webinar.time}
-                        </div>
-                      </div>
-
-                      <Button variant="outline" className="w-full btn-outline-hero">
-                        Join Webinar
-                        <ExternalLink className="h-4 w-4 ml-2" />
-                      </Button>
-                    </div>
+              {webinars.length === 0 ? (
+                <Card className="feature-card md:col-span-2">
+                  <CardContent className="p-8 text-center text-muted-foreground">
+                    No upcoming webinars. {canCreateWebinars && "Click 'Schedule Webinar' to add one."}
                   </CardContent>
                 </Card>
-              ))}
+              ) : (
+                webinars.map((webinar) => (
+                  <Card key={webinar.id} className="feature-card">
+                    <CardContent className="p-4">
+                      <div className="space-y-3">
+                        <div>
+                          <h3 className="font-semibold text-foreground">{webinar.title}</h3>
+                          <p className="text-sm text-muted-foreground">by {webinar.faculty_name || "Faculty"}</p>
+                        </div>
+
+                        <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
+                          <div className="flex items-center gap-1">
+                            <Calendar className="h-4 w-4" />
+                            {formatDate(webinar.webinar_date)}
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <Clock className="h-4 w-4" />
+                            {formatTime(webinar.webinar_time)}
+                          </div>
+                        </div>
+
+                        <Button 
+                          variant="outline" 
+                          className="w-full btn-outline-hero"
+                          onClick={() => window.open(webinar.meeting_link, "_blank")}
+                        >
+                          Join Webinar
+                          <ExternalLink className="h-4 w-4 ml-2" />
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))
+              )}
             </div>
           </TabsContent>
         </Tabs>
       </main>
+
+      {/* Dialogs */}
+      <CreateCircularDialog 
+        open={showCircularDialog} 
+        onOpenChange={setShowCircularDialog}
+        onSuccess={fetchCirculars}
+      />
+      <CreateEventDialog 
+        open={showEventDialog} 
+        onOpenChange={setShowEventDialog}
+        onSuccess={fetchEvents}
+      />
+      <CreateWebinarDialog 
+        open={showWebinarDialog} 
+        onOpenChange={setShowWebinarDialog}
+        onSuccess={fetchWebinars}
+      />
     </div>
   );
 };
