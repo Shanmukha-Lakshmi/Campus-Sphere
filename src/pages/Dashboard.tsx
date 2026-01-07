@@ -6,7 +6,6 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { 
   GraduationCap, 
-  Bell, 
   Calendar, 
   FileText, 
   Video, 
@@ -16,14 +15,20 @@ import {
   MapPin,
   ExternalLink,
   Plus,
-  ChevronRight
+  ChevronRight,
+  CalendarPlus,
+  BarChart3
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useUserRole } from "@/hooks/useUserRole";
+import { useWebinarRegistrations } from "@/hooks/useWebinarRegistrations";
 import { CreateCircularDialog } from "@/components/dashboard/CreateCircularDialog";
 import { CreateEventDialog } from "@/components/dashboard/CreateEventDialog";
 import { CreateWebinarDialog } from "@/components/dashboard/CreateWebinarDialog";
+import { NotificationsDropdown } from "@/components/dashboard/NotificationsDropdown";
+import { AnalyticsDashboard } from "@/components/dashboard/AnalyticsDashboard";
+import { generateGoogleCalendarLink } from "@/lib/notifications";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 
 interface Circular {
@@ -37,6 +42,7 @@ interface Circular {
 interface Event {
   id: string;
   title: string;
+  description: string | null;
   club_name: string;
   event_date: string;
   event_time: string;
@@ -47,6 +53,7 @@ interface Event {
 interface Webinar {
   id: string;
   title: string;
+  description: string | null;
   faculty_name: string | null;
   webinar_date: string;
   webinar_time: string;
@@ -67,8 +74,16 @@ const Dashboard = () => {
   const [showCircularDialog, setShowCircularDialog] = useState(false);
   const [showEventDialog, setShowEventDialog] = useState(false);
   const [showWebinarDialog, setShowWebinarDialog] = useState(false);
+  const [activeTab, setActiveTab] = useState("circulars");
 
   const { role, canCreateCirculars, canCreateEvents, canCreateWebinars } = useUserRole(user?.id);
+  const { 
+    registeredWebinars, 
+    registerForWebinar, 
+    isRegistered: isWebinarRegistered 
+  } = useWebinarRegistrations(user?.id);
+
+  const isAdmin = role === "admin";
 
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
@@ -122,7 +137,7 @@ const Dashboard = () => {
   const fetchEvents = async () => {
     const { data, error } = await supabase
       .from("events")
-      .select("id, title, club_name, event_date, event_time, venue")
+      .select("id, title, description, club_name, event_date, event_time, venue")
       .gte("event_date", new Date().toISOString().split("T")[0])
       .order("event_date", { ascending: true })
       .limit(10);
@@ -135,7 +150,7 @@ const Dashboard = () => {
   const fetchWebinars = async () => {
     const { data, error } = await supabase
       .from("webinars")
-      .select("id, title, faculty_name, webinar_date, webinar_time, meeting_link")
+      .select("id, title, description, faculty_name, webinar_date, webinar_time, meeting_link")
       .gte("webinar_date", new Date().toISOString().split("T")[0])
       .order("webinar_date", { ascending: true })
       .limit(10);
@@ -158,7 +173,7 @@ const Dashboard = () => {
     }
   };
 
-  const handleRegisterEvent = async (eventId: string) => {
+  const handleRegisterEvent = async (eventId: string, eventTitle: string) => {
     if (!user) return;
 
     const { error } = await supabase.from("event_registrations").insert({
@@ -173,6 +188,15 @@ const Dashboard = () => {
         variant: "destructive",
       });
     } else {
+      // Log analytics
+      await supabase.from("analytics_logs").insert({
+        event_type: "event_registration",
+        reference_id: eventId,
+        reference_type: "event",
+        user_id: user.id,
+        metadata: { event_title: eventTitle },
+      });
+
       toast({
         title: "Registered!",
         description: "You have successfully registered for this event.",
@@ -208,6 +232,23 @@ const Dashboard = () => {
     return `${displayHour}:${minutes} ${ampm}`;
   };
 
+  const handleAddToCalendar = (
+    title: string,
+    description: string | null,
+    date: string,
+    time: string,
+    location?: string
+  ) => {
+    const link = generateGoogleCalendarLink(
+      title,
+      description || "",
+      date,
+      time,
+      location
+    );
+    window.open(link, "_blank");
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -230,12 +271,7 @@ const Dashboard = () => {
             </div>
 
             <div className="flex items-center gap-4">
-              <Button variant="ghost" size="icon" className="relative">
-                <Bell className="h-5 w-5" />
-                <span className="absolute -top-1 -right-1 w-4 h-4 bg-destructive text-destructive-foreground text-xs rounded-full flex items-center justify-center">
-                  {circulars.length}
-                </span>
-              </Button>
+              <NotificationsDropdown userId={user?.id} />
 
               <div className="flex items-center gap-3">
                 <div className="text-right hidden sm:block">
@@ -315,10 +351,10 @@ const Dashboard = () => {
             <CardContent className="pt-6">
               <div className="flex items-center gap-3">
                 <div className="p-3 rounded-lg bg-destructive/10">
-                  <Bell className="h-5 w-5 text-destructive" />
+                  <BarChart3 className="h-5 w-5 text-destructive" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold">{registeredEvents.size}</p>
+                  <p className="text-2xl font-bold">{registeredEvents.size + registeredWebinars.size}</p>
                   <p className="text-sm text-muted-foreground">Registered</p>
                 </div>
               </div>
@@ -326,8 +362,15 @@ const Dashboard = () => {
           </Card>
         </div>
 
+        {/* Analytics Dashboard for Admin */}
+        {isAdmin && (
+          <div className="mb-8">
+            <AnalyticsDashboard isAdmin={isAdmin} />
+          </div>
+        )}
+
         {/* Content Tabs */}
-        <Tabs defaultValue="circulars" className="space-y-6">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
           <TabsList className="grid w-full md:w-auto md:inline-grid grid-cols-3 gap-2">
             <TabsTrigger value="circulars" className="gap-2">
               <FileText className="h-4 w-4" />
@@ -439,16 +482,32 @@ const Dashboard = () => {
                             </div>
                           </div>
 
-                          {!isRegistered && (
-                            <Button 
-                              variant="outline" 
-                              className="w-full btn-outline-hero"
-                              onClick={() => handleRegisterEvent(event.id)}
+                          <div className="flex gap-2">
+                            {!isRegistered && (
+                              <Button 
+                                variant="outline" 
+                                className="flex-1 btn-outline-hero"
+                                onClick={() => handleRegisterEvent(event.id, event.title)}
+                              >
+                                Register Now
+                                <ChevronRight className="h-4 w-4 ml-2" />
+                              </Button>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleAddToCalendar(
+                                event.title,
+                                event.description,
+                                event.event_date,
+                                event.event_time,
+                                event.venue
+                              )}
+                              title="Add to Google Calendar"
                             >
-                              Register Now
-                              <ChevronRight className="h-4 w-4 ml-2" />
+                              <CalendarPlus className="h-4 w-4" />
                             </Button>
-                          )}
+                          </div>
                         </div>
                       </CardContent>
                     </Card>
@@ -478,38 +537,72 @@ const Dashboard = () => {
                   </CardContent>
                 </Card>
               ) : (
-                webinars.map((webinar) => (
-                  <Card key={webinar.id} className="feature-card">
-                    <CardContent className="p-4">
-                      <div className="space-y-3">
-                        <div>
-                          <h3 className="font-semibold text-foreground">{webinar.title}</h3>
-                          <p className="text-sm text-muted-foreground">by {webinar.faculty_name || "Faculty"}</p>
-                        </div>
-
-                        <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
-                          <div className="flex items-center gap-1">
-                            <Calendar className="h-4 w-4" />
-                            {formatDate(webinar.webinar_date)}
+                webinars.map((webinar) => {
+                  const isRegistered = isWebinarRegistered(webinar.id);
+                  return (
+                    <Card key={webinar.id} className="feature-card">
+                      <CardContent className="p-4">
+                        <div className="space-y-3">
+                          <div className="flex items-start justify-between">
+                            <div>
+                              <h3 className="font-semibold text-foreground">{webinar.title}</h3>
+                              <p className="text-sm text-muted-foreground">by {webinar.faculty_name || "Faculty"}</p>
+                            </div>
+                            <Badge variant={isRegistered ? "default" : "outline"}>
+                              {isRegistered ? "Registered" : "Open"}
+                            </Badge>
                           </div>
-                          <div className="flex items-center gap-1">
-                            <Clock className="h-4 w-4" />
-                            {formatTime(webinar.webinar_time)}
+
+                          <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
+                            <div className="flex items-center gap-1">
+                              <Calendar className="h-4 w-4" />
+                              {formatDate(webinar.webinar_date)}
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <Clock className="h-4 w-4" />
+                              {formatTime(webinar.webinar_time)}
+                            </div>
+                          </div>
+
+                          <div className="flex gap-2">
+                            {!isRegistered ? (
+                              <Button 
+                                variant="outline" 
+                                className="flex-1 btn-outline-hero"
+                                onClick={() => registerForWebinar(webinar.id, webinar.title)}
+                              >
+                                Register
+                                <ChevronRight className="h-4 w-4 ml-2" />
+                              </Button>
+                            ) : (
+                              <Button 
+                                variant="outline" 
+                                className="flex-1 btn-outline-hero"
+                                onClick={() => window.open(webinar.meeting_link, "_blank")}
+                              >
+                                Join Webinar
+                                <ExternalLink className="h-4 w-4 ml-2" />
+                              </Button>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleAddToCalendar(
+                                webinar.title,
+                                webinar.description,
+                                webinar.webinar_date,
+                                webinar.webinar_time
+                              )}
+                              title="Add to Google Calendar"
+                            >
+                              <CalendarPlus className="h-4 w-4" />
+                            </Button>
                           </div>
                         </div>
-
-                        <Button 
-                          variant="outline" 
-                          className="w-full btn-outline-hero"
-                          onClick={() => window.open(webinar.meeting_link, "_blank")}
-                        >
-                          Join Webinar
-                          <ExternalLink className="h-4 w-4 ml-2" />
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))
+                      </CardContent>
+                    </Card>
+                  );
+                })
               )}
             </div>
           </TabsContent>

@@ -48,7 +48,7 @@ export const CreateEventDialog = ({ open, onOpenChange, onSuccess }: CreateEvent
         throw new Error("Not authenticated");
       }
 
-      const { error } = await supabase.from("events").insert({
+      const { data, error } = await supabase.from("events").insert({
         title: formData.title.trim(),
         description: formData.description.trim(),
         club_name: formData.club_name.trim(),
@@ -57,9 +57,28 @@ export const CreateEventDialog = ({ open, onOpenChange, onSuccess }: CreateEvent
         venue: formData.venue.trim(),
         max_participants: formData.max_participants ? parseInt(formData.max_participants) : null,
         created_by: user.id,
-      });
+      }).select("id").single();
 
       if (error) throw error;
+
+      // Notify all users about new event
+      const { data: profiles } = await supabase.from("profiles").select("user_id");
+      if (profiles && data) {
+        const formattedDate = new Date(formData.event_date).toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        });
+        const notifications = profiles.map((p) => ({
+          user_id: p.user_id,
+          title: "New Event: " + formData.title.trim(),
+          message: `${formData.club_name} is hosting "${formData.title}" on ${formattedDate} at ${formData.venue}. Register now!`,
+          type: "event",
+          reference_id: data.id,
+          reference_type: "event",
+        }));
+        await supabase.from("notifications").insert(notifications);
+      }
 
       toast({
         title: "Success",

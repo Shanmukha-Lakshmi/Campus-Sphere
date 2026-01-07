@@ -59,7 +59,7 @@ export const CreateWebinarDialog = ({ open, onOpenChange, onSuccess }: CreateWeb
         throw new Error("Not authenticated");
       }
 
-      const { error } = await supabase.from("webinars").insert({
+      const { data, error } = await supabase.from("webinars").insert({
         title: formData.title.trim(),
         description: formData.description.trim(),
         faculty_name: formData.faculty_name.trim() || user.user_metadata?.full_name || "Faculty",
@@ -67,9 +67,28 @@ export const CreateWebinarDialog = ({ open, onOpenChange, onSuccess }: CreateWeb
         webinar_time: formData.webinar_time,
         meeting_link: formData.meeting_link.trim(),
         created_by: user.id,
-      });
+      }).select("id").single();
 
       if (error) throw error;
+
+      // Notify all users about new webinar
+      const { data: profiles } = await supabase.from("profiles").select("user_id");
+      if (profiles && data) {
+        const formattedDate = new Date(formData.webinar_date).toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        });
+        const notifications = profiles.map((p) => ({
+          user_id: p.user_id,
+          title: "New Webinar: " + formData.title.trim(),
+          message: `"${formData.title}" webinar scheduled for ${formattedDate}. Don't miss it!`,
+          type: "webinar",
+          reference_id: data.id,
+          reference_type: "webinar",
+        }));
+        await supabase.from("notifications").insert(notifications);
+      }
 
       toast({
         title: "Success",
