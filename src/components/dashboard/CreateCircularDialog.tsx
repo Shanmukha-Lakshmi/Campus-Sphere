@@ -64,15 +64,29 @@ export const CreateCircularDialog = ({ open, onOpenChange, onSuccess }: CreateCi
         throw new Error("Not authenticated");
       }
 
-      const { error } = await supabase.from("circulars").insert({
+      const { data, error } = await supabase.from("circulars").insert({
         title: formData.title.trim(),
         content: formData.content.trim(),
         department: formData.department,
         type: formData.type,
         created_by: user.id,
-      });
+      }).select("id").single();
 
       if (error) throw error;
+
+      // Notify all users about new circular
+      const { data: profiles } = await supabase.from("profiles").select("user_id");
+      if (profiles && data) {
+        const notifications = profiles.map((p) => ({
+          user_id: p.user_id,
+          title: "New Circular: " + formData.title.trim(),
+          message: `A new circular from ${formData.department} has been posted.`,
+          type: "circular",
+          reference_id: data.id,
+          reference_type: "circular",
+        }));
+        await supabase.from("notifications").insert(notifications);
+      }
 
       toast({
         title: "Success",
