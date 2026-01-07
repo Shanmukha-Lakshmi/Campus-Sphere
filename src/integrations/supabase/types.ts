@@ -14,6 +14,36 @@ export type Database = {
   }
   public: {
     Tables: {
+      analytics_logs: {
+        Row: {
+          created_at: string
+          event_type: string
+          id: string
+          metadata: Json | null
+          reference_id: string | null
+          reference_type: string | null
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          event_type: string
+          id?: string
+          metadata?: Json | null
+          reference_id?: string | null
+          reference_type?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          event_type?: string
+          id?: string
+          metadata?: Json | null
+          reference_id?: string | null
+          reference_type?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       circulars: {
         Row: {
           attachment_url: string | null
@@ -124,6 +154,42 @@ export type Database = {
         }
         Relationships: []
       }
+      notifications: {
+        Row: {
+          created_at: string
+          id: string
+          is_read: boolean
+          message: string
+          reference_id: string | null
+          reference_type: string | null
+          title: string
+          type: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          is_read?: boolean
+          message: string
+          reference_id?: string | null
+          reference_type?: string | null
+          title: string
+          type?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          is_read?: boolean
+          message?: string
+          reference_id?: string | null
+          reference_type?: string | null
+          title?: string
+          type?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           avatar_url: string | null
@@ -160,6 +226,36 @@ export type Database = {
         }
         Relationships: []
       }
+      scheduled_reminders: {
+        Row: {
+          created_at: string
+          id: string
+          reference_id: string
+          reference_type: string
+          reminder_type: string
+          scheduled_for: string
+          sent_at: string | null
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          reference_id: string
+          reference_type: string
+          reminder_type: string
+          scheduled_for: string
+          sent_at?: string | null
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          reference_id?: string
+          reference_type?: string
+          reminder_type?: string
+          scheduled_for?: string
+          sent_at?: string | null
+        }
+        Relationships: []
+      }
       user_roles: {
         Row: {
           created_at: string
@@ -180,6 +276,35 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      webinar_registrations: {
+        Row: {
+          id: string
+          registered_at: string
+          user_id: string
+          webinar_id: string
+        }
+        Insert: {
+          id?: string
+          registered_at?: string
+          user_id: string
+          webinar_id: string
+        }
+        Update: {
+          id?: string
+          registered_at?: string
+          user_id?: string
+          webinar_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "webinar_registrations_webinar_id_fkey"
+            columns: ["webinar_id"]
+            isOneToOne: false
+            referencedRelation: "webinars"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       webinars: {
         Row: {
