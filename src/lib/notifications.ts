@@ -1,5 +1,3 @@
-import { supabase } from "@/integrations/supabase/client";
-
 type NotificationType = "event" | "webinar" | "circular" | "reminder" | "registration" | "general";
 
 interface CreateNotificationParams {
@@ -19,19 +17,8 @@ export const createNotification = async ({
   referenceId,
   referenceType,
 }: CreateNotificationParams) => {
-  const { error } = await supabase.from("notifications").insert({
-    user_id: userId,
-    title,
-    message,
-    type,
-    reference_id: referenceId,
-    reference_type: referenceType,
-  });
-
-  if (error) {
-    console.error("Failed to create notification:", error);
-    return false;
-  }
+  // Mock create notification
+  console.log("Mock create notification:", { userId, title, message });
   return true;
 };
 
@@ -41,21 +28,8 @@ export const notifyAllUsersAboutEvent = async (
   eventTitle: string,
   eventDate: string
 ) => {
-  // Get all user IDs from profiles
-  const { data: profiles } = await supabase.from("profiles").select("user_id");
-
-  if (!profiles) return;
-
-  const notifications = profiles.map((p) => ({
-    user_id: p.user_id,
-    title: "New Event: " + eventTitle,
-    message: `A new event "${eventTitle}" has been scheduled for ${eventDate}. Register now!`,
-    type: "event",
-    reference_id: eventId,
-    reference_type: "event",
-  }));
-
-  await supabase.from("notifications").insert(notifications);
+  // Mock notify all
+  console.log("Mock notify all users about event:", eventTitle);
 };
 
 // Helper to notify all users about a new webinar
@@ -64,20 +38,8 @@ export const notifyAllUsersAboutWebinar = async (
   webinarTitle: string,
   webinarDate: string
 ) => {
-  const { data: profiles } = await supabase.from("profiles").select("user_id");
-
-  if (!profiles) return;
-
-  const notifications = profiles.map((p) => ({
-    user_id: p.user_id,
-    title: "New Webinar: " + webinarTitle,
-    message: `A new webinar "${webinarTitle}" has been scheduled for ${webinarDate}. Don't miss it!`,
-    type: "webinar",
-    reference_id: webinarId,
-    reference_type: "webinar",
-  }));
-
-  await supabase.from("notifications").insert(notifications);
+  // Mock notify all
+  console.log("Mock notify all users about webinar:", webinarTitle);
 };
 
 // Helper to notify all users about a new circular
@@ -86,20 +48,8 @@ export const notifyAllUsersAboutCircular = async (
   circularTitle: string,
   department: string
 ) => {
-  const { data: profiles } = await supabase.from("profiles").select("user_id");
-
-  if (!profiles) return;
-
-  const notifications = profiles.map((p) => ({
-    user_id: p.user_id,
-    title: "New Circular: " + circularTitle,
-    message: `A new circular from ${department} has been posted. Check it out!`,
-    type: "circular",
-    reference_id: circularId,
-    reference_type: "circular",
-  }));
-
-  await supabase.from("notifications").insert(notifications);
+  // Mock notify all
+  console.log("Mock notify all users about circular:", circularTitle);
 };
 
 // Generate Google Calendar link

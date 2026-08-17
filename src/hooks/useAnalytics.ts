@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { db } from "@/lib/firebase";
+import { collection, query, where, onSnapshot, orderBy, limit } from "firebase/firestore";
 
 interface AnalyticsData {
   totalEventRegistrations: number;
@@ -32,94 +33,109 @@ export const useAnalytics = (isAdmin: boolean) => {
   });
   const [loading, setLoading] = useState(true);
 
-  const fetchAnalytics = async () => {
+  useEffect(() => {
     if (!isAdmin) {
       setLoading(false);
       return;
     }
 
-    try {
-      // Fetch counts
-      const [
-        eventRegsResult,
-        webinarRegsResult,
-        circularsResult,
-        eventsResult,
-        webinarsResult,
-      ] = await Promise.all([
-        supabase.from("event_registrations").select("id", { count: "exact", head: true }),
-        supabase.from("webinar_registrations").select("id", { count: "exact", head: true }),
-        supabase.from("circulars").select("id", { count: "exact", head: true }),
-        supabase.from("events").select("id", { count: "exact", head: true }),
-        supabase.from("webinars").select("id", { count: "exact", head: true }),
-      ]);
+    setLoading(true);
 
-      // Fetch event registration stats
-      const { data: eventRegs } = await supabase
-        .from("event_registrations")
-        .select(`
-          event_id,
-          events(title)
-        `);
+    // 1. Events Listener
+    const unsubEvents = onSnapshot(
+      collection(db, "events"),
+      (snapshot) => {
+        let totalEvents = 0;
+        let totalEventRegistrations = 0;
+        const eventStats: any[] = [];
 
-      const eventStatsMap = new Map<string, { title: string; count: number }>();
-      eventRegs?.forEach((reg: any) => {
-        const id = reg.event_id;
-        const title = reg.events?.title || "Unknown Event";
-        if (eventStatsMap.has(id)) {
-          eventStatsMap.get(id)!.count++;
-        } else {
-          eventStatsMap.set(id, { title, count: 1 });
-        }
-      });
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          totalEvents++;
+          const count = data.registered_users ? data.registered_users.length : 0;
+          totalEventRegistrations += count;
+          if (count > 0) {
+            eventStats.push({ event_id: doc.id, title: data.title, count });
+          }
+        });
 
-      // Fetch webinar registration stats
-      const { data: webinarRegs } = await supabase
-        .from("webinar_registrations")
-        .select(`
-          webinar_id,
-          webinars(title)
-        `);
+        // Sort by count desc
+        eventStats.sort((a, b) => b.count - a.count);
 
-      const webinarStatsMap = new Map<string, { title: string; count: number }>();
-      webinarRegs?.forEach((reg: any) => {
-        const id = reg.webinar_id;
-        const title = reg.webinars?.title || "Unknown Webinar";
-        if (webinarStatsMap.has(id)) {
-          webinarStatsMap.get(id)!.count++;
-        } else {
-          webinarStatsMap.set(id, { title, count: 1 });
-        }
-      });
+        setAnalytics(prev => ({
+          ...prev,
+          totalEvents,
+          totalEventRegistrations,
+          eventStats
+        }));
+      },
+      (error) => {
+        console.error("Events listener error:", error);
+      }
+    );
 
-      setAnalytics({
-        totalEventRegistrations: eventRegsResult.count || 0,
-        totalWebinarRegistrations: webinarRegsResult.count || 0,
-        totalCirculars: circularsResult.count || 0,
-        totalEvents: eventsResult.count || 0,
-        totalWebinars: webinarsResult.count || 0,
-        recentRegistrations: [],
-        eventStats: Array.from(eventStatsMap.entries()).map(([event_id, data]) => ({
-          event_id,
-          title: data.title,
-          count: data.count,
-        })),
-        webinarStats: Array.from(webinarStatsMap.entries()).map(([webinar_id, data]) => ({
-          webinar_id,
-          title: data.title,
-          count: data.count,
-        })),
-      });
-    } catch (error) {
-      console.error("Error fetching analytics:", error);
-    } finally {
+    // 2. Webinars Listener
+    const unsubWebinars = onSnapshot(
+      collection(db, "webinars"),
+      (snapshot) => {
+        let totalWebinars = 0;
+        let totalWebinarRegistrations = 0;
+        const webinarStats: any[] = [];
+
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          totalWebinars++;
+          const count = data.registered_users ? data.registered_users.length : 0;
+          totalWebinarRegistrations += count;
+          if (count > 0) {
+            webinarStats.push({ webinar_id: doc.id, title: data.title, count });
+          }
+        });
+
+        // Sort by count desc
+        webinarStats.sort((a, b) => b.count - a.count);
+
+        setAnalytics(prev => ({
+          ...prev,
+          totalWebinars,
+          totalWebinarRegistrations,
+          webinarStats
+        }));
+      },
+      (error) => {
+        console.error("Webinars listener error:", error);
+      }
+    );
+
+    // 3. Circulars Listener
+    const unsubCirculars = onSnapshot(
+      collection(db, "circulars"),
+      (snapshot) => {
+        setAnalytics(prev => ({
+          ...prev,
+          totalCirculars: snapshot.size
+        }));
+      },
+      (error) => {
+        console.error("Circulars listener error:", error);
+      }
+    );
+
+    // Initial loading state handling - we assume data comes in quickly with Firestore
+    // Ideally we'd wait for all initial snapshots, but for simplicity we turn off loading after a short delay
+    // or we could track which ones have returned.
+    const timer = setTimeout(() => {
       setLoading(false);
-    }
-  };
+    }, 1000);
 
-  useEffect(() => {
-    fetchAnalytics();
+    return () => {
+      unsubEvents();
+      unsubWebinars();
+      unsubCirculars();
+      clearTimeout(timer);
+    };
   }, [isAdmin]);
 
-  return { analytics, loading, refetch: fetchAnalytics };
+  return { analytics, loading };
 };
+

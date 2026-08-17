@@ -1,18 +1,22 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
+import { db, auth } from "@/lib/firebase";
+import { collection, addDoc, doc, updateDoc } from "firebase/firestore";
+import { MultiSelect } from "@/components/ui/multi-select";
 
 interface CreateCircularDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess: () => void;
+  initialData?: any;
 }
 
 const departments = [
@@ -26,6 +30,11 @@ const departments = [
   "Sports",
 ];
 
+const departmentOptions = [
+  { label: "All Departments", value: "All Departments" },
+  ...departments.map(d => ({ label: d, value: d }))
+];
+
 const circularTypes = [
   { value: "general", label: "General" },
   { value: "important", label: "Important" },
@@ -33,23 +42,62 @@ const circularTypes = [
   { value: "notice", label: "Notice" },
 ];
 
-export const CreateCircularDialog = ({ open, onOpenChange, onSuccess }: CreateCircularDialogProps) => {
+export const CreateCircularDialog = ({ open, onOpenChange, onSuccess, initialData }: CreateCircularDialogProps) => {
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<{
+    title: string;
+    content: string;
+    department: string[];
+    type: string;
+  }>({
     title: "",
     content: "",
-    department: "",
+    department: [],
     type: "general",
   });
 
+  useEffect(() => {
+    if (initialData) {
+      setFormData({
+        title: initialData.title || "",
+        content: initialData.content || "",
+        department: initialData.department ? (Array.isArray(initialData.department) ? initialData.department : [initialData.department]) : [],
+        type: initialData.type || "general",
+      });
+    } else {
+      setFormData({ title: "", content: "", department: [], type: "general" });
+    }
+  }, [initialData, open]);
+
+  const handleDepartmentChange = (selected: string[]) => {
+    // Check if "All Departments" was just selected
+    const wasAllSelected = formData.department.includes("All Departments");
+    const isAllSelected = selected.includes("All Departments");
+
+    if (!wasAllSelected && isAllSelected) {
+      // "All Departments" was just clicked -> Clear others
+      setFormData({ ...formData, department: ["All Departments"] });
+    } else if (wasAllSelected && isAllSelected && selected.length > 1) {
+      // "All Departments" was already there, but user clicked something else -> Remove "All Departments"
+      setFormData({ ...formData, department: selected.filter(d => d !== "All Departments") });
+    } else if (wasAllSelected && !isAllSelected) {
+      // User explicitly removed "All Departments"
+      setFormData({ ...formData, department: [] });
+    } else {
+      // Normal multi-select behavior
+      setFormData({ ...formData, department: selected });
+    }
+  };
+
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    if (!formData.title.trim() || !formData.department) {
+
+    if (!formData.title.trim() || formData.department.length === 0) {
       toast({
         title: "Validation Error",
-        description: "Please fill in all required fields.",
+        description: "Please fill in all required fields (Title and at least one Department).",
         variant: "destructive",
       });
       return;
@@ -58,45 +106,35 @@ export const CreateCircularDialog = ({ open, onOpenChange, onSuccess }: CreateCi
     setLoading(true);
 
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      
+      const user = auth.currentUser;
       if (!user) {
-        throw new Error("Not authenticated");
+        throw new Error("You must be logged in.");
       }
 
-      const { data, error } = await supabase.from("circulars").insert({
-        title: formData.title.trim(),
-        content: formData.content.trim(),
+      const circularData = {
+        title: formData.title,
+        content: formData.content,
         department: formData.department,
         type: formData.type,
-        created_by: user.id,
-      }).select("id").single();
+      };
 
-      if (error) throw error;
-
-      // Notify all users about new circular
-      const { data: profiles } = await supabase.from("profiles").select("user_id");
-      if (profiles && data) {
-        const notifications = profiles.map((p) => ({
-          user_id: p.user_id,
-          title: "New Circular: " + formData.title.trim(),
-          message: `A new circular from ${formData.department} has been posted.`,
-          type: "circular",
-          reference_id: data.id,
-          reference_type: "circular",
-        }));
-        await supabase.from("notifications").insert(notifications);
+      if (initialData) {
+        await updateDoc(doc(db, "circulars", initialData.id), circularData);
+        toast({ title: "Success", description: "Circular updated successfully!" });
+      } else {
+        await addDoc(collection(db, "circulars"), {
+          ...circularData,
+          created_at: new Date().toISOString(),
+          created_by: user.uid,
+          author_name: user.displayName || "Unknown"
+        });
+        toast({ title: "Success", description: "Circular posted successfully!" });
       }
 
-      toast({
-        title: "Success",
-        description: "Circular posted successfully!",
-      });
-
-      setFormData({ title: "", content: "", department: "", type: "general" });
       onSuccess();
       onOpenChange(false);
     } catch (error: any) {
+      console.error("Error creating circular:", error);
       toast({
         title: "Error",
         description: error.message || "Failed to post circular.",
@@ -109,9 +147,9 @@ export const CreateCircularDialog = ({ open, onOpenChange, onSuccess }: CreateCi
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[500px]">
+      <DialogContent className="sm:max-w-[500px] max-h-[85vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Post New Circular</DialogTitle>
+          <DialogTitle>{initialData ? "Edit Circular" : "Post New Circular"}</DialogTitle>
           <DialogDescription>
             Create a new circular to share with students and faculty.
           </DialogDescription>
@@ -130,18 +168,17 @@ export const CreateCircularDialog = ({ open, onOpenChange, onSuccess }: CreateCi
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="department">Department *</Label>
-            <Select value={formData.department} onValueChange={(value) => setFormData({ ...formData, department: value })}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select department" />
-              </SelectTrigger>
-              <SelectContent>
-                {departments.map((dept) => (
-                  <SelectItem key={dept} value={dept}>{dept}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Label>Department *</Label>
+
+            <MultiSelect
+              options={departmentOptions}
+              selected={formData.department}
+              onChange={handleDepartmentChange}
+              placeholder="Select departments..."
+            />
           </div>
+
+
 
           <div className="space-y-2">
             <Label htmlFor="type">Type</Label>
@@ -175,11 +212,12 @@ export const CreateCircularDialog = ({ open, onOpenChange, onSuccess }: CreateCi
             </Button>
             <Button type="submit" disabled={loading} className="btn-primary-gradient">
               {loading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              Post Circular
+              {initialData ? "Update Circular" : "Post Circular"}
             </Button>
           </div>
         </form>
       </DialogContent>
-    </Dialog>
+    </Dialog >
   );
 };
+

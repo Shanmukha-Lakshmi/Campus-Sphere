@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
 
 export interface Notification {
   id: string;
@@ -20,47 +19,40 @@ export const useNotifications = (userId: string | undefined) => {
   const fetchNotifications = async () => {
     if (!userId) return;
 
-    const { data, error } = await supabase
-      .from("notifications")
-      .select("*")
-      .eq("user_id", userId)
-      .order("created_at", { ascending: false })
-      .limit(20);
+    // Mock fetch notifications
+    await new Promise(resolve => setTimeout(resolve, 500));
+    const mockNotifications: Notification[] = [
+      {
+        id: '1',
+        title: 'Welcome to Campusphere',
+        message: 'This is a mock notification.',
+        type: 'info',
+        reference_id: null,
+        reference_type: null,
+        is_read: false,
+        created_at: new Date().toISOString()
+      }
+    ];
 
-    if (!error && data) {
-      setNotifications(data);
-      setUnreadCount(data.filter((n) => !n.is_read).length);
-    }
+    setNotifications(mockNotifications);
+    setUnreadCount(mockNotifications.filter((n) => !n.is_read).length);
     setLoading(false);
   };
 
   const markAsRead = async (notificationId: string) => {
-    const { error } = await supabase
-      .from("notifications")
-      .update({ is_read: true })
-      .eq("id", notificationId);
-
-    if (!error) {
-      setNotifications((prev) =>
-        prev.map((n) => (n.id === notificationId ? { ...n, is_read: true } : n))
-      );
-      setUnreadCount((prev) => Math.max(0, prev - 1));
-    }
+    // Mock mark as read
+    setNotifications((prev) =>
+      prev.map((n) => (n.id === notificationId ? { ...n, is_read: true } : n))
+    );
+    setUnreadCount((prev) => Math.max(0, prev - 1));
   };
 
   const markAllAsRead = async () => {
     if (!userId) return;
 
-    const { error } = await supabase
-      .from("notifications")
-      .update({ is_read: true })
-      .eq("user_id", userId)
-      .eq("is_read", false);
-
-    if (!error) {
-      setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
-      setUnreadCount(0);
-    }
+    // Mock mark all as read
+    setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
+    setUnreadCount(0);
   };
 
   useEffect(() => {
@@ -68,28 +60,8 @@ export const useNotifications = (userId: string | undefined) => {
 
     fetchNotifications();
 
-    // Set up realtime subscription
-    const channel = supabase
-      .channel("notifications-channel")
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "notifications",
-          filter: `user_id=eq.${userId}`,
-        },
-        (payload) => {
-          const newNotification = payload.new as Notification;
-          setNotifications((prev) => [newNotification, ...prev]);
-          setUnreadCount((prev) => prev + 1);
-        }
-      )
-      .subscribe();
+    // Mock realtime subscription (omitted for now)
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
   }, [userId]);
 
   return {
@@ -101,3 +73,4 @@ export const useNotifications = (userId: string | undefined) => {
     refetch: fetchNotifications,
   };
 };
+

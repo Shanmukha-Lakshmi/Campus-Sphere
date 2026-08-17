@@ -9,7 +9,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/components/ui/separator";
 import { GraduationCap, Mail, Lock, User, ArrowLeft, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { supabase } from "@/integrations/supabase/client";
+import { auth, googleProvider, db } from "@/lib/firebase";
+import {
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  signInWithPopup,
+  updateProfile
+} from "firebase/auth";
+import { doc, setDoc, getDoc } from "firebase/firestore";
 
 const Auth = () => {
   const navigate = useNavigate();
@@ -28,51 +35,141 @@ const Auth = () => {
   const [signupRole, setSignupRole] = useState<string>("");
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
 
+  const getFriendlyErrorMessage = (error: any): string => {
+    const code = error?.code || "";
+    const message = error?.message || "";
+
+    if (code === "auth/user-not-found" || code === "auth/invalid-credential") {
+      return "Account not found or incorrect credentials. If you haven't created an account yet, please click the 'Sign Up' tab above.";
+    }
+    if (code === "auth/wrong-password") {
+      return "Incorrect password. Please try again or reset your password.";
+    }
+    if (code === "auth/email-already-in-use") {
+      return "An account with this email already exists! Please click the 'Sign In' tab above to log in.";
+    }
+    if (code === "auth/popup-closed-by-user") {
+      return "Google sign-in popup was closed before completing.";
+    }
+    if (code === "auth/unauthorized-domain") {
+      return "This domain is not authorized for Google Sign-In in your Firebase Console.";
+    }
+    if (code === "auth/network-request-failed") {
+      return "Network error. Please check your internet connection and try again.";
+    }
+    if (message.includes("Only @svecw.edu.in")) {
+      return message;
+    }
+    return message || "An unexpected authentication error occurred. Please try again.";
+  };
+
   const handleGoogleSignIn = async () => {
     setIsGoogleLoading(true);
     try {
-      const redirectUrl = `${window.location.origin}/dashboard`;
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: "google",
-        options: {
-          redirectTo: redirectUrl,
-        },
-      });
+      const result = await signInWithPopup(auth, googleProvider);
+      const email = result.user.email || "";
+      const ADMIN_EMAIL = "admin@svecw.edu.in";
+      const isValidDomain = email.endsWith("@svecw.edu.in");
 
-      if (error) throw error;
-    } catch (error: any) {
+      if (email !== ADMIN_EMAIL && !isValidDomain) {
+        // If not admin and not valid domain, reject
+        await result.user.delete(); // Cleanup the user created by popup
+        throw new Error("Only @svecw.edu.in email addresses are allowed.");
+      }
+
+      // Try saving/updating Firestore profile safely (don't block navigation if Firestore fails)
+      try {
+        const userDocRef = doc(db, "users", result.user.uid);
+        const userDoc = await getDoc(userDocRef);
+
+        if (!userDoc.exists()) {
+          const role = email === ADMIN_EMAIL ? "admin" : "student";
+          await setDoc(userDocRef, {
+            email: email,
+            full_name: email === ADMIN_EMAIL ? "Admin" : (result.user.displayName || "User"),
+            role: role,
+            created_at: new Date().toISOString(),
+            last_login: new Date().toISOString()
+          });
+        } else {
+          await setDoc(userDocRef, {
+            email: email,
+            full_name: email === ADMIN_EMAIL ? "Admin" : (result.user.displayName || "User"),
+            last_login: new Date().toISOString()
+          }, { merge: true });
+        }
+      } catch (firestoreError) {
+        console.warn("Firestore user document sync warning:", firestoreError);
+      }
+
       toast({
-        title: "Google Sign-In failed",
-        description: error.message || "Please try again.",
+        title: "Google Sign-In",
+        description: "Successfully signed in with Google.",
+      });
+      navigate("/dashboard");
+    } catch (error: any) {
+      console.error("Google Sign-In Error:", error);
+      toast({
+        title: "Access Denied",
+        description: getFriendlyErrorMessage(error),
         variant: "destructive",
       });
+    } finally {
       setIsGoogleLoading(false);
     }
+  };
+
+  const validatePassword = (password: string) => {
+    const hasLetter = /[a-zA-Z]/.test(password);
+    const hasNumber = /\d/.test(password);
+    return hasLetter && hasNumber;
   };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
 
-    try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: loginEmail,
-        password: loginPassword,
-      });
+    const ADMIN_EMAIL = "admin@svecw.edu.in";
 
-      if (error) throw error;
+    try {
+      // Basic domain validation before even trying Firebase
+      if (loginEmail !== ADMIN_EMAIL && !loginEmail.endsWith("@svecw.edu.in")) {
+        throw new Error("Only @svecw.edu.in email addresses are allowed.");
+      }
+
+      const userCredential = await signInWithEmailAndPassword(auth, loginEmail, loginPassword);
+
+      // Attempt to ensure user profile exists in Firestore (safely)
+      try {
+        const userDocRef = doc(db, "users", userCredential.user.uid);
+        const userDoc = await getDoc(userDocRef);
+        if (!userDoc.exists()) {
+          const role = loginEmail === ADMIN_EMAIL ? "admin" : "student";
+          await setDoc(userDocRef, {
+            email: loginEmail,
+            full_name: userCredential.user.displayName || (loginEmail === ADMIN_EMAIL ? "Admin" : "Student"),
+            role: role,
+            created_at: new Date().toISOString(),
+            last_login: new Date().toISOString()
+          });
+        } else {
+          await setDoc(userDocRef, {
+            last_login: new Date().toISOString()
+          }, { merge: true });
+        }
+      } catch (fsErr) {
+        console.warn("Firestore login sync warning:", fsErr);
+      }
 
       toast({
         title: "Welcome back!",
         description: "You have successfully logged in.",
       });
-
-      // Navigate based on user role (will be implemented with profiles)
       navigate("/dashboard");
     } catch (error: any) {
       toast({
-        title: "Login failed",
-        description: error.message || "Please check your credentials and try again.",
+        title: "Login Failed",
+        description: getFriendlyErrorMessage(error),
         variant: "destructive",
       });
     } finally {
@@ -82,7 +179,7 @@ const Auth = () => {
 
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!signupRole) {
       toast({
         title: "Please select a role",
@@ -92,35 +189,63 @@ const Auth = () => {
       return;
     }
 
+    const ADMIN_EMAIL = "admin@svecw.edu.in";
+
+    // Domain validation
+    if (signupEmail !== ADMIN_EMAIL && !signupEmail.endsWith("@svecw.edu.in")) {
+      toast({
+        title: "Invalid Email",
+        description: "Only @svecw.edu.in email addresses are allowed.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Password validation
+    if (!validatePassword(signupPassword)) {
+      toast({
+        title: "Weak Password",
+        description: "Password must contain both letters and numbers.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setIsLoading(true);
 
     try {
-      const redirectUrl = `${window.location.origin}/dashboard`;
-      
-      const { data, error } = await supabase.auth.signUp({
-        email: signupEmail,
-        password: signupPassword,
-        options: {
-          emailRedirectTo: redirectUrl,
-          data: {
-            full_name: signupName,
-            role: signupRole,
-          },
-        },
+      const userCredential = await createUserWithEmailAndPassword(auth, signupEmail, signupPassword);
+
+      // Update profile with name
+      await updateProfile(userCredential.user, {
+        displayName: signupEmail === ADMIN_EMAIL ? "Admin" : signupName
       });
 
-      if (error) throw error;
+      const finalRole = signupEmail === ADMIN_EMAIL ? "admin" : signupRole;
+      const finalName = signupEmail === ADMIN_EMAIL ? "Admin" : signupName;
+
+      // Save user role to Firestore (safely, so errors don't prevent navigation)
+      try {
+        await setDoc(doc(db, "users", userCredential.user.uid), {
+          email: signupEmail,
+          full_name: finalName,
+          role: finalRole,
+          created_at: new Date().toISOString()
+        });
+      } catch (firestoreError) {
+        console.warn("Firestore signup setDoc warning:", firestoreError);
+      }
 
       toast({
         title: "Account created!",
-        description: "Welcome to Campusphere. You can now access your dashboard.",
+        description: "Welcome to Campusphere.",
       });
-
       navigate("/dashboard");
     } catch (error: any) {
+      console.error("Signup Error Details:", error);
       toast({
-        title: "Signup failed",
-        description: error.message || "Please try again later.",
+        title: "Signup Failed",
+        description: getFriendlyErrorMessage(error),
         variant: "destructive",
       });
     } finally {
@@ -303,6 +428,7 @@ const Auth = () => {
                         <SelectItem value="student">Student</SelectItem>
                         <SelectItem value="faculty">Faculty Member</SelectItem>
                         <SelectItem value="club_member">Club Member</SelectItem>
+
                       </SelectContent>
                     </Select>
                   </div>
@@ -395,3 +521,4 @@ const Auth = () => {
 };
 
 export default Auth;
+

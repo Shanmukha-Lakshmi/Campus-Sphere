@@ -1,20 +1,24 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { supabase } from "@/integrations/supabase/client";
+import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
+import { db, auth } from "@/lib/firebase";
+import { collection, addDoc, doc, updateDoc } from "firebase/firestore";
 
 interface CreateWebinarDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess: () => void;
+  initialData?: any;
 }
 
-export const CreateWebinarDialog = ({ open, onOpenChange, onSuccess }: CreateWebinarDialogProps) => {
+export const CreateWebinarDialog = ({ open, onOpenChange, onSuccess, initialData }: CreateWebinarDialogProps) => {
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
@@ -24,11 +28,39 @@ export const CreateWebinarDialog = ({ open, onOpenChange, onSuccess }: CreateWeb
     webinar_date: "",
     webinar_time: "",
     meeting_link: "",
+    max_participants: "",
+    registration_required: true,
   });
+
+  useEffect(() => {
+    if (initialData) {
+      setFormData({
+        title: initialData.title || "",
+        description: initialData.description || "",
+        faculty_name: initialData.faculty_name || "",
+        webinar_date: initialData.webinar_date || "",
+        webinar_time: initialData.webinar_time || "",
+        meeting_link: initialData.meeting_link || "",
+        max_participants: initialData.max_participants ? initialData.max_participants.toString() : "",
+        registration_required: initialData.registration_required !== false,
+      });
+    } else {
+      setFormData({
+        title: "",
+        description: "",
+        faculty_name: "",
+        webinar_date: "",
+        webinar_time: "",
+        meeting_link: "",
+        max_participants: "",
+        registration_required: true,
+      });
+    }
+  }, [initialData, open]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!formData.title.trim() || !formData.webinar_date || !formData.webinar_time || !formData.meeting_link.trim()) {
       toast({
         title: "Validation Error",
@@ -38,7 +70,18 @@ export const CreateWebinarDialog = ({ open, onOpenChange, onSuccess }: CreateWeb
       return;
     }
 
-    // Validate URL
+    const selectedDateTime = new Date(`${formData.webinar_date}T${formData.webinar_time}`);
+    const now = new Date();
+
+    if (selectedDateTime < now) {
+      toast({
+        title: "Validation Error",
+        description: "Webinar date and time cannot be in the past.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     try {
       new URL(formData.meeting_link);
     } catch {
@@ -53,49 +96,35 @@ export const CreateWebinarDialog = ({ open, onOpenChange, onSuccess }: CreateWeb
     setLoading(true);
 
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      
+      const user = auth.currentUser;
       if (!user) {
-        throw new Error("Not authenticated");
+        throw new Error("You must be logged in.");
       }
 
-      const { data, error } = await supabase.from("webinars").insert({
-        title: formData.title.trim(),
-        description: formData.description.trim(),
-        faculty_name: formData.faculty_name.trim() || user.user_metadata?.full_name || "Faculty",
+      const webinarData = {
+        title: formData.title,
+        description: formData.description,
+        faculty_name: formData.faculty_name,
         webinar_date: formData.webinar_date,
         webinar_time: formData.webinar_time,
-        meeting_link: formData.meeting_link.trim(),
-        created_by: user.id,
-      }).select("id").single();
+        meeting_link: formData.meeting_link,
+        max_participants: formData.max_participants ? parseInt(formData.max_participants) : null,
+        registration_required: formData.registration_required,
+      };
 
-      if (error) throw error;
-
-      // Notify all users about new webinar
-      const { data: profiles } = await supabase.from("profiles").select("user_id");
-      if (profiles && data) {
-        const formattedDate = new Date(formData.webinar_date).toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
-          year: "numeric",
+      if (initialData) {
+        await updateDoc(doc(db, "webinars", initialData.id), webinarData);
+        toast({ title: "Success", description: "Webinar updated successfully!" });
+      } else {
+        await addDoc(collection(db, "webinars"), {
+          ...webinarData,
+          created_at: new Date().toISOString(),
+          created_by: user.uid,
+          registered_users: []
         });
-        const notifications = profiles.map((p) => ({
-          user_id: p.user_id,
-          title: "New Webinar: " + formData.title.trim(),
-          message: `"${formData.title}" webinar scheduled for ${formattedDate}. Don't miss it!`,
-          type: "webinar",
-          reference_id: data.id,
-          reference_type: "webinar",
-        }));
-        await supabase.from("notifications").insert(notifications);
+        toast({ title: "Success", description: "Webinar scheduled successfully!" });
       }
 
-      toast({
-        title: "Success",
-        description: "Webinar scheduled successfully!",
-      });
-
-      setFormData({ title: "", description: "", faculty_name: "", webinar_date: "", webinar_time: "", meeting_link: "" });
       onSuccess();
       onOpenChange(false);
     } catch (error: any) {
@@ -111,9 +140,9 @@ export const CreateWebinarDialog = ({ open, onOpenChange, onSuccess }: CreateWeb
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[500px]">
+      <DialogContent className="sm:max-w-[500px] max-h-[85vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Schedule New Webinar</DialogTitle>
+          <DialogTitle>{initialData ? "Edit Webinar" : "Schedule New Webinar"}</DialogTitle>
           <DialogDescription>
             Create a new webinar session for students.
           </DialogDescription>
@@ -148,6 +177,7 @@ export const CreateWebinarDialog = ({ open, onOpenChange, onSuccess }: CreateWeb
               <Input
                 id="webinar-date"
                 type="date"
+                min={new Date().toISOString().split('T')[0]}
                 value={formData.webinar_date}
                 onChange={(e) => setFormData({ ...formData, webinar_date: e.target.value })}
               />
@@ -175,6 +205,27 @@ export const CreateWebinarDialog = ({ open, onOpenChange, onSuccess }: CreateWeb
           </div>
 
           <div className="space-y-2">
+            <Label htmlFor="max-participants">Max Participants (optional)</Label>
+            <Input
+              id="max-participants"
+              type="number"
+              placeholder="Leave empty for unlimited"
+              value={formData.max_participants}
+              onChange={(e) => setFormData({ ...formData, max_participants: e.target.value })}
+              min={1}
+            />
+          </div>
+
+          <div className="flex items-center space-x-2">
+            <Switch
+              id="registration-required"
+              checked={formData.registration_required}
+              onCheckedChange={(checked) => setFormData({ ...formData, registration_required: checked })}
+            />
+            <Label htmlFor="registration-required">Registration Required</Label>
+          </div>
+
+          <div className="space-y-2">
             <Label htmlFor="webinar-description">Description</Label>
             <Textarea
               id="webinar-description"
@@ -192,7 +243,7 @@ export const CreateWebinarDialog = ({ open, onOpenChange, onSuccess }: CreateWeb
             </Button>
             <Button type="submit" disabled={loading} className="btn-primary-gradient">
               {loading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              Schedule Webinar
+              {initialData ? "Update Webinar" : "Schedule Webinar"}
             </Button>
           </div>
         </form>
@@ -200,3 +251,4 @@ export const CreateWebinarDialog = ({ open, onOpenChange, onSuccess }: CreateWeb
     </Dialog>
   );
 };
+

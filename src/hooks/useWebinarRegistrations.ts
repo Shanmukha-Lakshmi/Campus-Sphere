@@ -1,6 +1,15 @@
 import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { db } from "@/lib/firebase";
+import {
+  collection,
+  query,
+  where,
+  getDocs,
+  addDoc,
+  deleteDoc,
+  doc
+} from "firebase/firestore";
 
 export const useWebinarRegistrations = (userId: string | undefined) => {
   const { toast } = useToast();
@@ -13,81 +22,90 @@ export const useWebinarRegistrations = (userId: string | undefined) => {
       return;
     }
 
-    const { data, error } = await supabase
-      .from("webinar_registrations")
-      .select("webinar_id")
-      .eq("user_id", userId);
+    try {
+      const q = query(
+        collection(db, "webinar_registrations"),
+        where("user_id", "==", userId)
+      );
 
-    if (!error && data) {
-      setRegisteredWebinars(new Set(data.map((r) => r.webinar_id)));
+      const querySnapshot = await getDocs(q);
+      const webinarIds = new Set<string>();
+      querySnapshot.forEach((doc) => {
+        webinarIds.add(doc.data().webinar_id);
+      });
+
+      setRegisteredWebinars(webinarIds);
+    } catch (error) {
+      console.error("Error fetching webinar registrations:", error);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const registerForWebinar = async (webinarId: string, webinarTitle: string) => {
     if (!userId) return false;
 
-    const { error } = await supabase.from("webinar_registrations").insert({
-      webinar_id: webinarId,
-      user_id: userId,
-    });
+    try {
+      await addDoc(collection(db, "webinar_registrations"), {
+        user_id: userId,
+        webinar_id: webinarId,
+        registered_at: new Date().toISOString()
+      });
 
-    if (error) {
       toast({
-        title: "Registration failed",
+        title: "Registered!",
+        description: "You have successfully registered for this webinar.",
+      });
+
+      setRegisteredWebinars((prev) => new Set([...prev, webinarId]));
+      return true;
+    } catch (error: any) {
+      toast({
+        title: "Registration Failed",
         description: error.message,
         variant: "destructive",
       });
       return false;
     }
-
-    // Log analytics
-    await supabase.from("analytics_logs").insert({
-      event_type: "webinar_registration",
-      reference_id: webinarId,
-      reference_type: "webinar",
-      user_id: userId,
-      metadata: { webinar_title: webinarTitle },
-    });
-
-    toast({
-      title: "Registered!",
-      description: "You have successfully registered for this webinar.",
-    });
-
-    setRegisteredWebinars((prev) => new Set([...prev, webinarId]));
-    return true;
   };
 
   const unregisterFromWebinar = async (webinarId: string) => {
     if (!userId) return false;
 
-    const { error } = await supabase
-      .from("webinar_registrations")
-      .delete()
-      .eq("webinar_id", webinarId)
-      .eq("user_id", userId);
+    try {
+      // Find the document to delete
+      const q = query(
+        collection(db, "webinar_registrations"),
+        where("user_id", "==", userId),
+        where("webinar_id", "==", webinarId)
+      );
 
-    if (error) {
+      const querySnapshot = await getDocs(q);
+
+      if (!querySnapshot.empty) {
+        await deleteDoc(doc(db, "webinar_registrations", querySnapshot.docs[0].id));
+
+        toast({
+          title: "Unregistered",
+          description: "You have been removed from this webinar.",
+        });
+
+        setRegisteredWebinars((prev) => {
+          const next = new Set(prev);
+          next.delete(webinarId);
+          return next;
+        });
+        return true;
+      }
+      return false;
+    } catch (error: any) {
       toast({
-        title: "Failed to unregister",
+        title: "Error",
         description: error.message,
         variant: "destructive",
       });
       return false;
     }
-
-    toast({
-      title: "Unregistered",
-      description: "You have been removed from this webinar.",
-    });
-
-    setRegisteredWebinars((prev) => {
-      const next = new Set(prev);
-      next.delete(webinarId);
-      return next;
-    });
-    return true;
   };
 
   useEffect(() => {
@@ -103,3 +121,5 @@ export const useWebinarRegistrations = (userId: string | undefined) => {
     refetch: fetchRegistrations,
   };
 };
+
+
