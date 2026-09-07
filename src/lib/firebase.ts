@@ -22,12 +22,23 @@ console.log("Firebase Config Debug:", {
     appId: firebaseConfig.appId,
 });
 
-if (!firebaseConfig.apiKey) {
-    console.error("CRITICAL: Firebase API Key is missing! Check .env file.");
+if (!firebaseConfig.apiKey || firebaseConfig.apiKey === 'your_firebase_api_key') {
+    console.warn("Firebase is not configured. Some features will not work. Add your Firebase credentials to .env.local");
 }
 
-const app = initializeApp(firebaseConfig);
-export const auth = getAuth(app);
+let app;
+let auth;
+let db;
+let storage;
+
+try {
+    app = initializeApp(firebaseConfig);
+    auth = getAuth(app);
+    db = getFirestore(app);
+    storage = getStorage(app);
+} catch (error) {
+    console.warn("Firebase initialization failed:", error);
+}
+
 export const googleProvider = new GoogleAuthProvider();
-export const db = getFirestore(app);
-export const storage = getStorage(app);
+export { app, auth, db, storage };
